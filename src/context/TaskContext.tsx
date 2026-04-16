@@ -1,19 +1,23 @@
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { Task, Priority, Subtask } from '../types';
-import { addDays, isSameDay } from 'date-fns';
+import { isSameDay } from 'date-fns';
+import { supabase } from '@/integrations/supabase/client';
 
-const TASKS_STORAGE_KEY = 'calendared-tasks';
+// Temporary anonymous user ID until authentication is implemented.
+// Replace with `supabase.auth.getUser()` once auth is added.
+const ANON_USER_ID = '00000000-0000-0000-0000-000000000000';
 
 interface TaskContextProps {
   tasks: Task[];
-  addTask: (title: string, date: Date, priority: Priority, subtasks: Subtask[]) => void;
-  deleteTask: (id: string) => void;
-  toggleTaskCompletion: (id: string) => void;
-  toggleSubtaskCompletion: (taskId: string, subtaskId: string) => void;
-  deleteSubtask: (taskId: string, subtaskId: string) => void;
-  updateTask: (task: Task) => void;
-  updateTaskDate: (id: string, date: Date) => void;
+  isLoading: boolean;
+  addTask: (title: string, date: Date, priority: Priority, subtasks: Subtask[]) => Promise<void>;
+  deleteTask: (id: string) => Promise<void>;
+  toggleTaskCompletion: (id: string) => Promise<void>;
+  toggleSubtaskCompletion: (taskId: string, subtaskId: string) => Promise<void>;
+  deleteSubtask: (taskId: string, subtaskId: string) => Promise<void>;
+  updateTask: (task: Task) => Promise<void>;
+  updateTaskDate: (id: string, date: Date) => Promise<void>;
   getTasksForDate: (date: Date) => Task[];
   getTasksForMonth: (year: number, month: number) => Task[];
   getTasksForWeek: (date: Date) => Task[];
@@ -23,35 +27,7 @@ const TaskContext = createContext<TaskContextProps>({} as TaskContextProps);
 
 export const useTaskContext = () => useContext(TaskContext);
 
-const sampleTasks: Task[] = [
-  {
-    id: '1',
-    title: 'Complete project proposal',
-    completed: false,
-    date: new Date(),
-    priority: 'high',
-    subtasks: [
-      { id: '1-1', title: 'Research competition', completed: false },
-      { id: '1-2', title: 'Write executive summary', completed: false },
-    ],
-  },
-  {
-    id: '2',
-    title: 'Schedule team meeting',
-    completed: false,
-    date: addDays(new Date(), 1),
-    priority: 'medium',
-    subtasks: [],
-  },
-  {
-    id: '3',
-    title: 'Review quarterly reports',
-    completed: false,
-    date: addDays(new Date(), 2),
-    priority: 'low',
-    subtasks: [],
-  },
-];
+// --- DB <-> App type mapping helpers ---
 
 const isPriority = (value: unknown): value is Priority =>
   value === 'low' || value === 'medium' || value === 'high';
@@ -66,196 +42,231 @@ const isSubtask = (value: unknown): value is Subtask => {
   );
 };
 
-const toTaskOrNull = (value: unknown): Task | null => {
-  if (!value || typeof value !== 'object') return null;
+type DbTaskRow = {
+  id: string;
+  title: string;
+  completed: boolean;
+  due_date: string | null;
+  priority: string | null;
+  description: string | null;
+  user_id: string;
+  created_at: string;
+  labels: string[] | null;
+  project_id: string | null;
+};
 
-  const candidate = value as Record<string, unknown>;
-  if (
-    typeof candidate.id !== 'string' ||
-    typeof candidate.title !== 'string' ||
-    typeof candidate.completed !== 'boolean' ||
-    !isPriority(candidate.priority) ||
-    typeof candidate.date !== 'string' ||
-    !Array.isArray(candidate.subtasks)
-  ) {
-    return null;
+/**
+ * Maps a Supabase tasks row to the app's Task type.
+ * Subtasks are stored as JSON in the `description` field.
+ */
+const dbRowToTask = (row: DbTaskRow): Task => {
+  let subtasks: Subtask[] = [];
+  if (row.description) {
+    try {
+      const parsed = JSON.parse(row.description);
+      if (Array.isArray(parsed)) {
+        subtasks = parsed.filter(isSubtask);
+      }
+    } catch {
+      // description may hold plain text from other sources; ignore parse errors
+    }
   }
-
-  const parsedDate = new Date(candidate.date);
-  if (Number.isNaN(parsedDate.getTime())) {
-    return null;
-  }
-
-  const subtasks = candidate.subtasks.filter(isSubtask);
-  if (subtasks.length !== candidate.subtasks.length) {
-    return null;
-  }
-
   return {
-    id: candidate.id,
-    title: candidate.title,
-    completed: candidate.completed,
-    date: parsedDate,
-    priority: candidate.priority,
+    id: row.id,
+    title: row.title,
+    completed: row.completed,
+    date: row.due_date ? new Date(row.due_date) : new Date(),
+    priority: isPriority(row.priority) ? row.priority : 'medium',
     subtasks,
   };
 };
 
-const loadTasksFromStorage = (): Task[] => {
-  try {
-    const savedTasks = localStorage.getItem(TASKS_STORAGE_KEY);
-    if (!savedTasks) {
-      return sampleTasks;
-    }
-
-    const parsed = JSON.parse(savedTasks);
-    if (!Array.isArray(parsed)) {
-      localStorage.removeItem(TASKS_STORAGE_KEY);
-      return sampleTasks;
-    }
-
-    const restoredTasks = parsed.map(toTaskOrNull);
-    if (restoredTasks.some((task) => task === null)) {
-      localStorage.removeItem(TASKS_STORAGE_KEY);
-      return sampleTasks;
-    }
-
-    return restoredTasks as Task[];
-  } catch {
-    localStorage.removeItem(TASKS_STORAGE_KEY);
-    return sampleTasks;
-  }
-};
-
-const serializeTasks = (tasks: Task[]) =>
-  tasks.map((task) => ({
-    ...task,
-    date: task.date.toISOString(),
-  }));
+// --- Provider ---
 
 export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [tasks, setTasks] = useState<Task[]>(() => loadTasksFromStorage());
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
+  const fetchTasks = useCallback(async () => {
+    setIsLoading(true);
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (!error && data) {
+      setTasks((data as DbTaskRow[]).map(dbRowToTask));
+    }
+    setIsLoading(false);
+  }, []);
+
+  // Initial fetch
   useEffect(() => {
-    localStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(serializeTasks(tasks)));
-  }, [tasks]);
+    fetchTasks();
+  }, [fetchTasks]);
 
-  const addTask = (title: string, date: Date, priority: Priority, subtasks: Subtask[]) => {
-    const newTask: Task = {
-      id: Date.now().toString(),
-      title,
-      completed: false,
-      date,
-      priority,
-      subtasks,
-    };
-    setTasks((prevTasks) => [...prevTasks, newTask]);
-  };
-
-  const deleteTask = (id: string) => {
-    setTasks((prevTasks) => prevTasks.filter((task) => task.id !== id));
-  };
-
-  const toggleTaskCompletion = (id: string) => {
-    setTasks((prevTasks) =>
-      prevTasks.map((task) =>
-        task.id === id ? { ...task, completed: !task.completed } : task
+  // Realtime subscription — re-fetch whenever any row changes
+  useEffect(() => {
+    const channel = supabase
+      .channel('tasks-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'tasks' },
+        () => { fetchTasks(); }
       )
-    );
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [fetchTasks]);
+
+  // --- CRUD operations ---
+
+  const addTask = async (title: string, date: Date, priority: Priority, subtasks: Subtask[]) => {
+    const { data, error } = await supabase
+      .from('tasks')
+      .insert([{
+        title,
+        due_date: date.toISOString(),
+        priority,
+        description: subtasks.length > 0 ? JSON.stringify(subtasks) : null,
+        completed: false,
+        user_id: ANON_USER_ID,
+      }])
+      .select()
+      .single();
+
+    if (!error && data) {
+      setTasks(prev => [dbRowToTask(data as DbTaskRow), ...prev]);
+    }
   };
 
-  const toggleSubtaskCompletion = (taskId: string, subtaskId: string) => {
-    setTasks((prevTasks) =>
-      prevTasks.map((task) => {
-        if (task.id !== taskId) {
-          return task;
-        }
+  const deleteTask = async (id: string) => {
+    const { error } = await supabase.from('tasks').delete().eq('id', id);
+    if (!error) {
+      setTasks(prev => prev.filter(t => t.id !== id));
+    }
+  };
 
-        const nextSubtasks = task.subtasks.map((subtask) =>
-          subtask.id === subtaskId
-            ? { ...subtask, completed: !subtask.completed }
-            : subtask
-        );
+  const toggleTaskCompletion = async (id: string) => {
+    const task = tasks.find(t => t.id === id);
+    if (!task) return;
 
-        const allSubtasksCompleted =
-          nextSubtasks.length > 0 && nextSubtasks.every((subtask) => subtask.completed);
+    const { error } = await supabase
+      .from('tasks')
+      .update({ completed: !task.completed })
+      .eq('id', id);
 
-        return {
-          ...task,
-          subtasks: nextSubtasks,
-          completed: allSubtasksCompleted,
-        };
+    if (!error) {
+      setTasks(prev =>
+        prev.map(t => t.id === id ? { ...t, completed: !t.completed } : t)
+      );
+    }
+  };
+
+  const toggleSubtaskCompletion = async (taskId: string, subtaskId: string) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    const nextSubtasks = task.subtasks.map(s =>
+      s.id === subtaskId ? { ...s, completed: !s.completed } : s
+    );
+    const allCompleted = nextSubtasks.length > 0 && nextSubtasks.every(s => s.completed);
+
+    const { error } = await supabase
+      .from('tasks')
+      .update({
+        description: JSON.stringify(nextSubtasks),
+        completed: allCompleted,
       })
-    );
+      .eq('id', taskId);
+
+    if (!error) {
+      setTasks(prev =>
+        prev.map(t =>
+          t.id === taskId ? { ...t, subtasks: nextSubtasks, completed: allCompleted } : t
+        )
+      );
+    }
   };
 
-  const deleteSubtask = (taskId: string, subtaskId: string) => {
-    setTasks((prevTasks) =>
-      prevTasks.map((task) => {
-        if (task.id !== taskId) {
-          return task;
-        }
+  const deleteSubtask = async (taskId: string, subtaskId: string) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
 
-        const nextSubtasks = task.subtasks.filter((subtask) => subtask.id !== subtaskId);
+    const nextSubtasks = task.subtasks.filter(s => s.id !== subtaskId);
+    const completed =
+      nextSubtasks.length > 0
+        ? nextSubtasks.every(s => s.completed)
+        : task.completed;
 
-        return {
-          ...task,
-          subtasks: nextSubtasks,
-          completed:
-            nextSubtasks.length > 0
-              ? nextSubtasks.every((subtask) => subtask.completed)
-              : task.completed,
-        };
+    const { error } = await supabase
+      .from('tasks')
+      .update({
+        description: nextSubtasks.length > 0 ? JSON.stringify(nextSubtasks) : null,
+        completed,
       })
+      .eq('id', taskId);
+
+    if (!error) {
+      setTasks(prev =>
+        prev.map(t => t.id === taskId ? { ...t, subtasks: nextSubtasks, completed } : t)
+      );
+    }
+  };
+
+  const updateTask = async (updatedTask: Task) => {
+    const { error } = await supabase
+      .from('tasks')
+      .update({
+        title: updatedTask.title,
+        due_date: updatedTask.date.toISOString(),
+        priority: updatedTask.priority,
+        completed: updatedTask.completed,
+        description:
+          updatedTask.subtasks.length > 0 ? JSON.stringify(updatedTask.subtasks) : null,
+      })
+      .eq('id', updatedTask.id);
+
+    if (!error) {
+      setTasks(prev => prev.map(t => t.id === updatedTask.id ? updatedTask : t));
+    }
+  };
+
+  const updateTaskDate = async (id: string, date: Date) => {
+    const { error } = await supabase
+      .from('tasks')
+      .update({ due_date: date.toISOString() })
+      .eq('id', id);
+
+    if (!error) {
+      setTasks(prev => prev.map(t => t.id === id ? { ...t, date } : t));
+    }
+  };
+
+  // --- Pure filter helpers (synchronous, work on in-memory state) ---
+
+  const getTasksForDate = (date: Date) =>
+    tasks.filter(task => isSameDay(task.date, date));
+
+  const getTasksForMonth = (year: number, month: number) =>
+    tasks.filter(task =>
+      task.date.getFullYear() === year && task.date.getMonth() === month
     );
-  };
-
-  const updateTask = (updatedTask: Task) => {
-    setTasks((prevTasks) =>
-      prevTasks.map((task) =>
-        task.id === updatedTask.id ? updatedTask : task
-      )
-    );
-  };
-
-  const updateTaskDate = (id: string, date: Date) => {
-    setTasks((prevTasks) =>
-      prevTasks.map((task) =>
-        task.id === id ? { ...task, date } : task
-      )
-    );
-  };
-
-  const getTasksForDate = (date: Date) => {
-    return tasks.filter((task) => isSameDay(task.date, date));
-  };
-
-  const getTasksForMonth = (year: number, month: number) => {
-    return tasks.filter((task) => {
-      const taskDate = task.date;
-      return taskDate.getFullYear() === year && taskDate.getMonth() === month;
-    });
-  };
 
   const getTasksForWeek = (date: Date) => {
-    // This is a simplified approach - ideally we'd use date-fns or similar to get the proper week range
     const day = date.getDay();
     const startDate = new Date(date);
     startDate.setDate(date.getDate() - day);
-    
     const endDate = new Date(date);
     endDate.setDate(date.getDate() + (6 - day));
-    
-    return tasks.filter((task) => {
-      const taskDate = task.date;
-      return taskDate >= startDate && taskDate <= endDate;
-    });
+    return tasks.filter(task => task.date >= startDate && task.date <= endDate);
   };
 
   return (
     <TaskContext.Provider
       value={{
         tasks,
+        isLoading,
         addTask,
         deleteTask,
         toggleTaskCompletion,

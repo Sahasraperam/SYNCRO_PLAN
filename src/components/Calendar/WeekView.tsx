@@ -29,12 +29,12 @@ const WeekView = ({ currentDate, onDateClick }: WeekViewProps) => {
         const tasksForDay = getTasksForDate(day);
         
         return (
-          <div key={day.toString()} className="border rounded-lg overflow-hidden">
+          <div key={day.toString()} className="border border-border/40 rounded-xl overflow-hidden bg-card/20 backdrop-blur-sm transition-all duration-300 hover:border-border/80">
             <div 
               onClick={() => onDateClick(day)}
               className={`
-                p-3 cursor-pointer
-                ${isToday(day) ? 'bg-primary/10' : 'bg-gray-50'}
+                p-3 cursor-pointer transition-colors
+                ${isToday(day) ? 'bg-primary/20 text-primary-foreground font-semibold' : 'bg-card/40 hover:bg-card/60'}
               `}
             >
               <h3 className="font-medium flex justify-between">
@@ -46,7 +46,7 @@ const WeekView = ({ currentDate, onDateClick }: WeekViewProps) => {
               {tasksForDay.length > 0 ? (
                 <TaskList tasks={tasksForDay} />
               ) : (
-                <div className="text-center py-4 text-gray-400">
+                <div className="text-center py-4 text-muted-foreground italic">
                   No tasks scheduled
                 </div>
               )}

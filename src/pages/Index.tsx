@@ -49,7 +49,7 @@ const TaskSidebar = ({
   };
 
   return (
-    <div className="h-full border-r bg-white p-4 overflow-y-auto">
+    <div className="h-full border-r border-border/40 bg-card/30 backdrop-blur-md p-4 overflow-y-auto">
       <h2 className="text-lg font-semibold mb-4">
         {getTitle()}
       </h2>

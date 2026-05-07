@@ -12,7 +12,7 @@ const Layout = ({ children }: LayoutProps) => {
 
   return (
     <SidebarContext.Provider value={{ isOpen, setIsOpen }}>
-      <div className="min-h-screen flex flex-col bg-gray-50">
+      <div className="min-h-screen flex flex-col bg-transparent">
         <Header />
         <main className="flex-1 overflow-hidden">
           {children}

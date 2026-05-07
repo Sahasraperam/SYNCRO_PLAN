@@ -16,7 +16,7 @@ const TaskList = ({ tasks, showDetails = false }: TaskListProps) => {
     return (
       <div className="space-y-2">
         {[1, 2, 3].map(i => (
-          <div key={i} className="border rounded-lg p-3 bg-white space-y-2">
+          <div key={i} className="border border-border/50 rounded-xl p-3 bg-card/40 backdrop-blur-md space-y-2">
             <Skeleton className="h-4 w-3/4" />
             <Skeleton className="h-3 w-1/2" />
           </div>

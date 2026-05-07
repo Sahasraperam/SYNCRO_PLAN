@@ -74,11 +74,11 @@ const NewTaskButton = () => {
   return (
     <>
       <Button 
-        className="fixed bottom-4 right-4 w-12 h-12 rounded-full shadow-lg"
+        className="fixed bottom-6 right-6 w-14 h-14 rounded-full shadow-[0_0_20px_rgba(139,92,246,0.5)] hover:shadow-[0_0_30px_rgba(139,92,246,0.8)] transition-all duration-300 bg-primary hover:bg-primary/90 text-white z-50"
         size="icon"
         onClick={() => setOpen(true)}
       >
-        <Plus className="h-6 w-6" />
+        <Plus className="h-7 w-7" />
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>

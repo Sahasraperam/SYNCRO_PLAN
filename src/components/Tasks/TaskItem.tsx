@@ -24,13 +24,13 @@ const TaskItem = ({ task, compact = false, showDetails = false }: TaskItemProps)
   const getPriorityColor = (priority: string) => {
     switch (priority) {
       case 'high':
-        return 'bg-task-high';
+        return 'bg-red-500/20 text-red-300 border border-red-500/30';
       case 'medium':
-        return 'bg-task-medium';
+        return 'bg-orange-500/20 text-orange-300 border border-orange-500/30';
       case 'low':
-        return 'bg-task-low';
+        return 'bg-blue-500/20 text-blue-300 border border-blue-500/30';
       default:
-        return 'bg-gray-200';
+        return 'bg-card/40 border border-border/50 text-foreground';
     }
   };
 
@@ -58,9 +58,9 @@ const TaskItem = ({ task, compact = false, showDetails = false }: TaskItemProps)
     return (
       <div 
         className={`
-          px-2 py-1 rounded text-xs flex items-center gap-1 text-left
+          px-2 py-1 rounded text-xs flex items-center gap-1 text-left backdrop-blur-sm
           ${getPriorityColor(task.priority)} 
-          ${task.completed ? 'opacity-60' : ''}
+          ${task.completed ? 'opacity-40 grayscale' : ''}
         `}
         onClick={(e) => {
           e.stopPropagation();
@@ -80,9 +80,9 @@ const TaskItem = ({ task, compact = false, showDetails = false }: TaskItemProps)
   return (
     <div 
       className={`
-        relative border rounded-lg p-3 transition-all animate-fade-in
-        hover:shadow-md cursor-pointer 
-        ${task.completed ? 'task-completed bg-gray-50' : 'bg-white'}
+        relative border rounded-xl p-3 transition-all duration-300 animate-fade-in
+        hover:shadow-[0_4px_20px_rgba(0,0,0,0.2)] hover:border-primary/50 cursor-pointer backdrop-blur-md
+        ${task.completed ? 'task-completed bg-card/20 border-border/20 opacity-70' : 'bg-card/40 border-border/50'}
       `}
       onClick={() => setIsDetailOpen(true)}
     >

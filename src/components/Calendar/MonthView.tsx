@@ -54,10 +54,11 @@ const MonthView = ({ currentDate, onDateClick }: MonthViewProps) => {
               key={day.toString()}
               onClick={() => onDateClick(day)}
               className={`
-                h-full min-h-[80px] p-1 sm:p-2 border rounded-lg transition-colors
-                hover:bg-gray-50 cursor-pointer flex flex-col
-                ${isCurrentMonth ? 'bg-white' : 'bg-gray-50 text-gray-400'}
-                ${isToday(day) ? 'border-primary' : 'border-gray-200'}
+                h-full min-h-[80px] p-1 sm:p-2 border rounded-xl transition-all duration-300
+                hover:bg-primary/10 hover:border-primary/50 cursor-pointer flex flex-col
+                backdrop-blur-md
+                ${isCurrentMonth ? 'bg-card/40 border-border/50' : 'bg-background/20 text-muted-foreground border-border/20'}
+                ${isToday(day) ? 'border-primary shadow-[0_0_15px_rgba(139,92,246,0.3)]' : ''}
               `}
             >
               <div className="text-right">

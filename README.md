@@ -1,74 +1,60 @@
-# Welcome to your Lovable project
+# SYNCRO_PLAN
 
-## Project info
+SYNCRO_PLAN is a calendar-first task manager that keeps your schedule and tasks in one place. It is designed for quick planning, clear priorities, and a focused daily view.
 
-**URL**: https://lovable.dev/projects/be6dfe7f-e379-4c7c-b9c1-e2253c58477a
+## Key features
 
-## How can I edit this code?
+- Calendar views (day, week, month) with task context
+- Task list with priority and due date tracking
+- Subtasks and completion status
+- Responsive layout for desktop and mobile
 
-There are several ways of editing your application.
+## Screenshots or demo
 
-**Use Lovable**
+Add a few screenshots or a short GIF demo here.
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/be6dfe7f-e379-4c7c-b9c1-e2253c58477a) and start prompting.
-
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
+## Local setup
 
 ```sh
-# Step 1: Clone the repository using the project's Git URL.
 git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
 cd <YOUR_PROJECT_NAME>
+npm install
+```
 
-# Step 3: Install the necessary dependencies.
-npm i
+Package manager: this project uses npm. The lockfile is `package-lock.json`.
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
+Configure environment variables:
+
+```
+VITE_SUPABASE_URL=
+VITE_SUPABASE_PUBLISHABLE_KEY=
+```
+
+Run the app:
+
+```sh
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
-
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
-
-**Use GitHub Codespaces**
-
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
+## Tech stack
 
 - Vite
 - TypeScript
 - React
 - shadcn-ui
 - Tailwind CSS
+- Supabase
 
-## How can I deploy this project?
+## Deployment
 
-Simply open [Lovable](https://lovable.dev/projects/be6dfe7f-e379-4c7c-b9c1-e2253c58477a) and click on Share -> Publish.
+Build the app:
 
-## Can I connect a custom domain to my Lovable project?
+```sh
+npm run build
+```
 
-Yes, you can!
+Then deploy the `dist` folder to a static host such as Netlify, Vercel, or Cloudflare Pages. Make sure your environment variables are configured in the hosting provider.
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+## License
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/tips-tricks/custom-domain#step-by-step-guide)
-# SYNCRO_PLAN
+MIT

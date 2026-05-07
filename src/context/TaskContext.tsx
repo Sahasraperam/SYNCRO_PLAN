@@ -4,10 +4,6 @@ import { Task, Priority, Subtask } from '../types';
 import { isSameDay } from 'date-fns';
 import { supabase } from '@/integrations/supabase/client';
 
-// Temporary anonymous user ID until authentication is implemented.
-// Replace with `supabase.auth.getUser()` once auth is added.
-const ANON_USER_ID = '00000000-0000-0000-0000-000000000000';
-
 interface TaskContextProps {
   tasks: Task[];
   isLoading: boolean;
@@ -32,50 +28,38 @@ export const useTaskContext = () => useContext(TaskContext);
 const isPriority = (value: unknown): value is Priority =>
   value === 'low' || value === 'medium' || value === 'high';
 
-const isSubtask = (value: unknown): value is Subtask => {
-  if (!value || typeof value !== 'object') return false;
-  const candidate = value as Record<string, unknown>;
-  return (
-    typeof candidate.id === 'string' &&
-    typeof candidate.title === 'string' &&
-    typeof candidate.completed === 'boolean'
-  );
+type DbSubtaskRow = {
+  id: string;
+  title: string;
+  completed: boolean | null;
 };
 
 type DbTaskRow = {
   id: string;
   title: string;
-  completed: boolean;
-  due_date: string | null;
+  completed: boolean | null;
+  due_date: string;
   priority: string | null;
-  description: string | null;
-  user_id: string;
   created_at: string;
-  labels: string[] | null;
-  project_id: string | null;
+  user_id: string | null;
+  subtasks: DbSubtaskRow[];
 };
 
 /**
- * Maps a Supabase tasks row to the app's Task type.
- * Subtasks are stored as JSON in the `description` field.
+ * Maps a Supabase tasks row with joined subtasks to the app's Task type.
  */
 const dbRowToTask = (row: DbTaskRow): Task => {
-  let subtasks: Subtask[] = [];
-  if (row.description) {
-    try {
-      const parsed = JSON.parse(row.description);
-      if (Array.isArray(parsed)) {
-        subtasks = parsed.filter(isSubtask);
-      }
-    } catch {
-      // description may hold plain text from other sources; ignore parse errors
-    }
-  }
+  const subtasks: Subtask[] = (row.subtasks || []).map(s => ({
+    id: s.id,
+    title: s.title,
+    completed: !!s.completed
+  }));
+  
   return {
     id: row.id,
     title: row.title,
-    completed: row.completed,
-    date: row.due_date ? new Date(row.due_date) : new Date(),
+    completed: !!row.completed,
+    date: new Date(row.due_date),
     priority: isPriority(row.priority) ? row.priority : 'medium',
     subtasks,
   };
@@ -91,11 +75,12 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(true);
     const { data, error } = await supabase
       .from('tasks')
-      .select('*')
+      // NOTE: We request the 'subtasks' join. We use * inside to get fields
+      .select('*, subtasks(*)')
       .order('created_at', { ascending: false });
 
     if (!error && data) {
-      setTasks((data as DbTaskRow[]).map(dbRowToTask));
+      setTasks((data as unknown as DbTaskRow[]).map(dbRowToTask));
     }
     setIsLoading(false);
   }, []);
@@ -105,38 +90,52 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
     fetchTasks();
   }, [fetchTasks]);
 
-  // Realtime subscription — re-fetch whenever any row changes
+  // Realtime subscription — re-fetch whenever tasks or subtasks change
   useEffect(() => {
-    const channel = supabase
+    const tasksChannel = supabase
       .channel('tasks-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'tasks' },
-        () => { fetchTasks(); }
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, () => fetchTasks())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'subtasks' }, () => fetchTasks())
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+    return () => { supabase.removeChannel(tasksChannel); };
   }, [fetchTasks]);
 
   // --- CRUD operations ---
 
-  const addTask = async (title: string, date: Date, priority: Priority, subtasks: Subtask[]) => {
+  const addTask = async (title: string, date: Date, priority: Priority, newSubtasks: Subtask[]) => {
     const { data, error } = await supabase
       .from('tasks')
       .insert([{
         title,
         due_date: date.toISOString(),
         priority,
-        description: subtasks.length > 0 ? JSON.stringify(subtasks) : null,
         completed: false,
-        user_id: ANON_USER_ID,
+        // Omitted user_id, defaults to null so foreign key doesn't fail
       }])
       .select()
       .single();
 
     if (!error && data) {
-      setTasks(prev => [dbRowToTask(data as DbTaskRow), ...prev]);
+      let insertedSubtasks: DbSubtaskRow[] = [];
+      if (newSubtasks.length > 0) {
+        // Insert relational subtasks into the separate table
+        const { data: stData } = await supabase
+          .from('subtasks')
+          .insert(newSubtasks.map(s => ({
+            task_id: data.id,
+            title: s.title,
+            completed: false
+          })))
+          .select();
+        
+        if (stData) {
+          insertedSubtasks = stData as unknown as DbSubtaskRow[];
+        }
+      }
+      
+      const fullRow: DbTaskRow = { ...(data as unknown as Omit<DbTaskRow, 'subtasks'>), subtasks: insertedSubtasks };
+      setTasks(prev => [dbRowToTask(fullRow), ...prev]);
     }
   };
 
@@ -166,21 +165,28 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const toggleSubtaskCompletion = async (taskId: string, subtaskId: string) => {
     const task = tasks.find(t => t.id === taskId);
     if (!task) return;
+    
+    const subtask = task.subtasks.find(s => s.id === subtaskId);
+    if (!subtask) return;
 
-    const nextSubtasks = task.subtasks.map(s =>
-      s.id === subtaskId ? { ...s, completed: !s.completed } : s
-    );
-    const allCompleted = nextSubtasks.length > 0 && nextSubtasks.every(s => s.completed);
-
+    // Mutate the specific subtask row
     const { error } = await supabase
-      .from('tasks')
-      .update({
-        description: JSON.stringify(nextSubtasks),
-        completed: allCompleted,
-      })
-      .eq('id', taskId);
+      .from('subtasks')
+      .update({ completed: !subtask.completed })
+      .eq('id', subtaskId);
 
     if (!error) {
+      const nextSubtasks = task.subtasks.map(s => 
+        s.id === subtaskId ? { ...s, completed: !s.completed } : s
+      );
+      
+      // Auto-complete the parent task if all subtasks are done
+      const allCompleted = nextSubtasks.length > 0 && nextSubtasks.every(s => s.completed);
+      
+      if (allCompleted !== task.completed) {
+        await supabase.from('tasks').update({ completed: allCompleted }).eq('id', taskId);
+      }
+
       setTasks(prev =>
         prev.map(t =>
           t.id === taskId ? { ...t, subtasks: nextSubtasks, completed: allCompleted } : t
@@ -193,21 +199,16 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const task = tasks.find(t => t.id === taskId);
     if (!task) return;
 
-    const nextSubtasks = task.subtasks.filter(s => s.id !== subtaskId);
-    const completed =
-      nextSubtasks.length > 0
-        ? nextSubtasks.every(s => s.completed)
-        : task.completed;
-
-    const { error } = await supabase
-      .from('tasks')
-      .update({
-        description: nextSubtasks.length > 0 ? JSON.stringify(nextSubtasks) : null,
-        completed,
-      })
-      .eq('id', taskId);
+    const { error } = await supabase.from('subtasks').delete().eq('id', subtaskId);
 
     if (!error) {
+      const nextSubtasks = task.subtasks.filter(s => s.id !== subtaskId);
+      const completed = nextSubtasks.length > 0 ? nextSubtasks.every(s => s.completed) : task.completed;
+      
+      if (completed !== task.completed) {
+         await supabase.from('tasks').update({ completed }).eq('id', taskId);
+      }
+
       setTasks(prev =>
         prev.map(t => t.id === taskId ? { ...t, subtasks: nextSubtasks, completed } : t)
       );
@@ -222,8 +223,6 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
         due_date: updatedTask.date.toISOString(),
         priority: updatedTask.priority,
         completed: updatedTask.completed,
-        description:
-          updatedTask.subtasks.length > 0 ? JSON.stringify(updatedTask.subtasks) : null,
       })
       .eq('id', updatedTask.id);
 
@@ -283,3 +282,4 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
     </TaskContext.Provider>
   );
 };
+

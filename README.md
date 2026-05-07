@@ -1,17 +1,22 @@
 # SYNCRO_PLAN
 
-SYNCRO_PLAN is a calendar-first task manager that keeps your schedule and tasks in one place. It is designed for quick planning, clear priorities, and a focused daily view.
+SYNCRO_PLAN is a calendar-first task manager that unifies planning and execution. It pairs a full calendar UI with task and subtask tracking so users can plan ahead, prioritize clearly, and execute with daily focus.
 
-## Key features
+## Why it stands out
 
-- Calendar views (day, week, month) with task context
-- Task list with priority and due date tracking
-- Subtasks and completion status
-- Responsive layout for desktop and mobile
+- Calendar-driven UX: day, week, and month views with contextual task lists.
+- Task + subtask workflows: structured breakdown with completion tracking.
+- Real-time updates: Supabase-backed changes are reflected immediately.
+- Responsive design: optimized layout for desktop and mobile.
+- Strong type safety: end-to-end TypeScript across UI, state, and data access.
 
-## Screenshots or demo
 
-Add a few screenshots or a short GIF demo here.
+## Project structure (high level)
+
+- UI and layout: [src/components](src/components)
+- State and data access: [src/context/TaskContext.tsx](src/context/TaskContext.tsx)
+- Pages and routing: [src/pages](src/pages)
+- Supabase client/types: [src/integrations/supabase](src/integrations/supabase)
 
 ## Local setup
 
@@ -23,18 +28,27 @@ npm install
 
 Package manager: this project uses npm. The lockfile is `package-lock.json`.
 
-Configure environment variables:
+### Environment variables
+
+Create a `.env` file (copy from `.env.example`) and set:
 
 ```
 VITE_SUPABASE_URL=
 VITE_SUPABASE_PUBLISHABLE_KEY=
 ```
 
-Run the app:
+### Run locally
 
 ```sh
 npm run dev
 ```
+
+## Data model (Supabase)
+
+- `tasks`: title, due_date, priority, completed, user_id
+- `subtasks`: task_id, title, completed
+
+If RLS is enabled, add policies that match your auth model (anonymous or authenticated).
 
 ## Tech stack
 
@@ -47,13 +61,17 @@ npm run dev
 
 ## Deployment
 
-Build the app:
-
 ```sh
 npm run build
 ```
 
-Then deploy the `dist` folder to a static host such as Netlify, Vercel, or Cloudflare Pages. Make sure your environment variables are configured in the hosting provider.
+Deploy the `dist` folder to a static host (Netlify, Vercel, or Cloudflare Pages) and configure the same environment variables in the hosting provider.
+
+## Roadmap ideas
+
+- Auth UI and user onboarding
+- Shared calendars and team views
+- Smart filters and recurring tasks
 
 ## License
 

@@ -8,7 +8,6 @@ import { TaskProvider, useTaskContext } from '@/context/TaskContext';
 import { ViewMode } from '@/types';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { useSidebarContext } from '@/components/Layout/Header';
-import { useIsMobile } from '@/hooks/use-mobile';
 
 const TaskSidebar = ({ 
   currentDate, 
@@ -63,7 +62,6 @@ const CalendarContent = () => {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<ViewMode>('month');
   const { isOpen, setIsOpen } = useSidebarContext();
-  const isMobile = useIsMobile();
 
   return (
     <div className="flex h-[calc(100vh-4rem)]">

@@ -1,19 +1,20 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { Task, Priority, Subtask } from '../types';
-import { isSameDay } from 'date-fns';
-import { supabase } from '@/integrations/supabase/client';
+import { format, isSameDay } from 'date-fns';
+import { SUPABASE_CONFIGURED, supabase } from '@/integrations/supabase/client';
 
 interface TaskContextProps {
   tasks: Task[];
   isLoading: boolean;
-  addTask: (title: string, date: Date, priority: Priority, subtasks: Subtask[]) => Promise<void>;
-  deleteTask: (id: string) => Promise<void>;
-  toggleTaskCompletion: (id: string) => Promise<void>;
-  toggleSubtaskCompletion: (taskId: string, subtaskId: string) => Promise<void>;
-  deleteSubtask: (taskId: string, subtaskId: string) => Promise<void>;
-  updateTask: (task: Task) => Promise<void>;
-  updateTaskDate: (id: string, date: Date) => Promise<void>;
+  addTask: (title: string, date: Date, priority: Priority, subtasks: Subtask[]) => Promise<MutationResult>;
+  addSubtask: (taskId: string, title: string) => Promise<MutationResult>;
+  deleteTask: (id: string) => Promise<MutationResult>;
+  toggleTaskCompletion: (id: string) => Promise<MutationResult>;
+  toggleSubtaskCompletion: (taskId: string, subtaskId: string) => Promise<MutationResult>;
+  deleteSubtask: (taskId: string, subtaskId: string) => Promise<MutationResult>;
+  updateTask: (task: Task) => Promise<MutationResult>;
+  updateTaskDate: (id: string, date: Date) => Promise<MutationResult>;
   getTasksForDate: (date: Date) => Task[];
   getTasksForMonth: (year: number, month: number) => Task[];
   getTasksForWeek: (date: Date) => Task[];
@@ -24,6 +25,27 @@ const TaskContext = createContext<TaskContextProps>({} as TaskContextProps);
 export const useTaskContext = () => useContext(TaskContext);
 
 // --- DB <-> App type mapping helpers ---
+
+type MutationResult = { ok: true } | { ok: false; error: string };
+
+const okResult = (): MutationResult => ({ ok: true });
+const errorResult = (error?: { message?: string } | null): MutationResult => ({
+  ok: false,
+  error: error?.message || 'Unexpected error',
+});
+
+const formatDateForDb = (date: Date) => format(date, 'yyyy-MM-dd');
+const parseDbDate = (value: string) => {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) {
+    const year = Number(match[1]);
+    const month = Number(match[2]) - 1;
+    const day = Number(match[3]);
+    return new Date(year, month, day);
+  }
+
+  return new Date(value);
+};
 
 const isPriority = (value: unknown): value is Priority =>
   value === 'low' || value === 'medium' || value === 'high';
@@ -59,7 +81,7 @@ const dbRowToTask = (row: DbTaskRow): Task => {
     id: row.id,
     title: row.title,
     completed: !!row.completed,
-    date: new Date(row.due_date),
+    date: parseDbDate(row.due_date),
     priority: isPriority(row.priority) ? row.priority : 'medium',
     subtasks,
   };
@@ -70,20 +92,55 @@ const dbRowToTask = (row: DbTaskRow): Task => {
 export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [userId, setUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadUser = async () => {
+      const { data, error } = await supabase.auth.getUser();
+      if (!error && isMounted) {
+        setUserId(data.user?.id ?? null);
+      }
+    };
+
+    loadUser();
+
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (isMounted) {
+        setUserId(session?.user?.id ?? null);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.subscription.unsubscribe();
+    };
+  }, []);
 
   const fetchTasks = useCallback(async () => {
+    if (!SUPABASE_CONFIGURED) {
+      setTasks([]);
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
-    const { data, error } = await supabase
+    let query = supabase
       .from('tasks')
       // NOTE: We request the 'subtasks' join. We use * inside to get fields
       .select('*, subtasks(*)')
       .order('created_at', { ascending: false });
 
+    query = userId ? query.eq('user_id', userId) : query.is('user_id', null);
+
+    const { data, error } = await query;
+
     if (!error && data) {
       setTasks((data as unknown as DbTaskRow[]).map(dbRowToTask));
     }
     setIsLoading(false);
-  }, []);
+  }, [userId]);
 
   // Initial fetch
   useEffect(() => {
@@ -92,6 +149,10 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Realtime subscription — re-fetch whenever tasks or subtasks change
   useEffect(() => {
+    if (!SUPABASE_CONFIGURED) {
+      return;
+    }
+
     const tasksChannel = supabase
       .channel('tasks-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, () => fetchTasks())
@@ -108,10 +169,10 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .from('tasks')
       .insert([{
         title,
-        due_date: date.toISOString(),
+        due_date: formatDateForDb(date),
         priority,
         completed: false,
-        // Omitted user_id, defaults to null so foreign key doesn't fail
+        user_id: userId,
       }])
       .select()
       .single();
@@ -136,19 +197,61 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       const fullRow: DbTaskRow = { ...(data as unknown as Omit<DbTaskRow, 'subtasks'>), subtasks: insertedSubtasks };
       setTasks(prev => [dbRowToTask(fullRow), ...prev]);
+      return okResult();
     }
+
+    return errorResult(error);
+  };
+
+  const addSubtask = async (taskId: string, title: string) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return errorResult({ message: 'Task not found' });
+
+    const { data, error } = await supabase
+      .from('subtasks')
+      .insert({ task_id: taskId, title, completed: false })
+      .select()
+      .single();
+
+    if (error || !data) return errorResult(error);
+
+    if (task.completed) {
+      const { error: updateError } = await supabase
+        .from('tasks')
+        .update({ completed: false })
+        .eq('id', taskId);
+
+      if (updateError) return errorResult(updateError);
+    }
+
+    setTasks(prev =>
+      prev.map(t =>
+        t.id === taskId
+          ? {
+              ...t,
+              completed: false,
+              subtasks: [...t.subtasks, { id: data.id, title: data.title, completed: !!data.completed }],
+            }
+          : t
+      )
+    );
+
+    return okResult();
   };
 
   const deleteTask = async (id: string) => {
     const { error } = await supabase.from('tasks').delete().eq('id', id);
     if (!error) {
       setTasks(prev => prev.filter(t => t.id !== id));
+      return okResult();
     }
+
+    return errorResult(error);
   };
 
   const toggleTaskCompletion = async (id: string) => {
     const task = tasks.find(t => t.id === id);
-    if (!task) return;
+    if (!task) return errorResult({ message: 'Task not found' });
 
     const { error } = await supabase
       .from('tasks')
@@ -159,15 +262,18 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setTasks(prev =>
         prev.map(t => t.id === id ? { ...t, completed: !t.completed } : t)
       );
+      return okResult();
     }
+
+    return errorResult(error);
   };
 
   const toggleSubtaskCompletion = async (taskId: string, subtaskId: string) => {
     const task = tasks.find(t => t.id === taskId);
-    if (!task) return;
+    if (!task) return errorResult({ message: 'Task not found' });
     
     const subtask = task.subtasks.find(s => s.id === subtaskId);
-    if (!subtask) return;
+    if (!subtask) return errorResult({ message: 'Subtask not found' });
 
     // Mutate the specific subtask row
     const { error } = await supabase
@@ -184,7 +290,12 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const allCompleted = nextSubtasks.length > 0 && nextSubtasks.every(s => s.completed);
       
       if (allCompleted !== task.completed) {
-        await supabase.from('tasks').update({ completed: allCompleted }).eq('id', taskId);
+        const { error: updateError } = await supabase
+          .from('tasks')
+          .update({ completed: allCompleted })
+          .eq('id', taskId);
+
+        if (updateError) return errorResult(updateError);
       }
 
       setTasks(prev =>
@@ -192,12 +303,15 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
           t.id === taskId ? { ...t, subtasks: nextSubtasks, completed: allCompleted } : t
         )
       );
+      return okResult();
     }
+
+    return errorResult(error);
   };
 
   const deleteSubtask = async (taskId: string, subtaskId: string) => {
     const task = tasks.find(t => t.id === taskId);
-    if (!task) return;
+    if (!task) return errorResult({ message: 'Task not found' });
 
     const { error } = await supabase.from('subtasks').delete().eq('id', subtaskId);
 
@@ -206,13 +320,21 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const completed = nextSubtasks.length > 0 ? nextSubtasks.every(s => s.completed) : task.completed;
       
       if (completed !== task.completed) {
-         await supabase.from('tasks').update({ completed }).eq('id', taskId);
+         const { error: updateError } = await supabase
+           .from('tasks')
+           .update({ completed })
+           .eq('id', taskId);
+
+         if (updateError) return errorResult(updateError);
       }
 
       setTasks(prev =>
         prev.map(t => t.id === taskId ? { ...t, subtasks: nextSubtasks, completed } : t)
       );
+      return okResult();
     }
+
+    return errorResult(error);
   };
 
   const updateTask = async (updatedTask: Task) => {
@@ -220,7 +342,7 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .from('tasks')
       .update({
         title: updatedTask.title,
-        due_date: updatedTask.date.toISOString(),
+        due_date: formatDateForDb(updatedTask.date),
         priority: updatedTask.priority,
         completed: updatedTask.completed,
       })
@@ -228,18 +350,24 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (!error) {
       setTasks(prev => prev.map(t => t.id === updatedTask.id ? updatedTask : t));
+      return okResult();
     }
+
+    return errorResult(error);
   };
 
   const updateTaskDate = async (id: string, date: Date) => {
     const { error } = await supabase
       .from('tasks')
-      .update({ due_date: date.toISOString() })
+      .update({ due_date: formatDateForDb(date) })
       .eq('id', id);
 
     if (!error) {
       setTasks(prev => prev.map(t => t.id === id ? { ...t, date } : t));
+      return okResult();
     }
+
+    return errorResult(error);
   };
 
   // --- Pure filter helpers (synchronous, work on in-memory state) ---
@@ -267,6 +395,7 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
         tasks,
         isLoading,
         addTask,
+        addSubtask,
         deleteTask,
         toggleTaskCompletion,
         toggleSubtaskCompletion,

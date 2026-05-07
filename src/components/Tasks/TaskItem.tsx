@@ -8,6 +8,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Flag, CalendarIcon } from 'lucide-react';
 import TaskDetail from './TaskDetail';
+import { useToast } from '@/hooks/use-toast';
 
 interface TaskItemProps {
   task: Task;
@@ -18,6 +19,7 @@ interface TaskItemProps {
 const TaskItem = ({ task, compact = false, showDetails = false }: TaskItemProps) => {
   const { toggleTaskCompletion } = useTaskContext();
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const { toast } = useToast();
 
   const getPriorityColor = (priority: string) => {
     switch (priority) {
@@ -40,9 +42,16 @@ const TaskItem = ({ task, compact = false, showDetails = false }: TaskItemProps)
     return <Flag className={`w-3 h-3 ${color}`} />;
   };
 
-  const handleToggle = (e: React.MouseEvent) => {
+  const handleToggle = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    toggleTaskCompletion(task.id);
+    const result = await toggleTaskCompletion(task.id);
+    if (!result.ok) {
+      toast({
+        title: "Unable to update task",
+        description: result.error,
+        variant: "destructive",
+      });
+    }
   };
 
   if (compact) {

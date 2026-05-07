@@ -24,15 +24,23 @@ const NewTaskButton = () => {
   const [subtasks, setSubtasks] = useState<Subtask[]>([]);
   const [newSubtask, setNewSubtask] = useState('');
 
-  const handleAddTask = () => {
+  const handleAddTask = async () => {
     if (title.trim() !== '') {
-      addTask(title, date, priority, subtasks);
-      toast({
-        title: "Task added successfully",
-        description: `"${title}" has been added to your tasks.`
-      });
-      resetForm();
-      setOpen(false);
+      const result = await addTask(title, date, priority, subtasks);
+      if (result.ok) {
+        toast({
+          title: "Task added successfully",
+          description: `"${title}" has been added to your tasks.`
+        });
+        resetForm();
+        setOpen(false);
+      } else {
+        toast({
+          title: "Unable to add task",
+          description: result.error,
+          variant: "destructive",
+        });
+      }
     }
   };
 
@@ -146,7 +154,7 @@ const NewTaskButton = () => {
                     placeholder="Add subtask"
                     value={newSubtask}
                     onChange={(e) => setNewSubtask(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && addSubtask()}
+                    onKeyDown={(e) => e.key === 'Enter' && addSubtask()}
                   />
                   <Button size="icon" onClick={addSubtask}>
                     <Plus className="h-4 w-4" />

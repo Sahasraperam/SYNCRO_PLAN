@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { format, addMonths, subMonths, addWeeks, subWeeks } from 'date-fns';
+import { format, addDays, addMonths, addWeeks, subDays, subMonths, subWeeks } from 'date-fns';
 import { Button } from "@/components/ui/button";
 import { ViewMode } from '@/types';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
@@ -27,7 +27,7 @@ const CalendarHeader = ({
         setCurrentDate(subWeeks(currentDate, 1));
         break;
       case 'day':
-        setCurrentDate(new Date(currentDate.setDate(currentDate.getDate() - 1)));
+        setCurrentDate(subDays(currentDate, 1));
         break;
     }
   };
@@ -41,7 +41,7 @@ const CalendarHeader = ({
         setCurrentDate(addWeeks(currentDate, 1));
         break;
       case 'day':
-        setCurrentDate(new Date(currentDate.setDate(currentDate.getDate() + 1)));
+        setCurrentDate(addDays(currentDate, 1));
         break;
     }
   };

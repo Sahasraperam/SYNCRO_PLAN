@@ -10,6 +10,7 @@ import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { CalendarIcon, Trash, Plus, Check, X } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 
 interface TaskDetailProps {
   task: Task;
@@ -17,44 +18,80 @@ interface TaskDetailProps {
 }
 
 const TaskDetail = ({ task, onClose }: TaskDetailProps) => {
-  const { updateTask, deleteTask, toggleSubtaskCompletion, deleteSubtask } = useTaskContext();
+  const { updateTask, deleteTask, toggleSubtaskCompletion, deleteSubtask, addSubtask } = useTaskContext();
+  const { toast } = useToast();
   
   const [title, setTitle] = useState(task.title);
   const [date, setDate] = useState<Date>(task.date);
   const [priority, setPriority] = useState<Priority>(task.priority);
   const [newSubtask, setNewSubtask] = useState('');
   
-  const handleSave = () => {
+  const handleSave = async () => {
     const updatedTask: Task = {
       ...task,
       title,
       date,
       priority,
     };
-    updateTask(updatedTask);
-    onClose();
-  };
-  
-  const handleDelete = () => {
-    deleteTask(task.id);
-    onClose();
-  };
-  
-  const addSubtask = () => {
-    if (newSubtask.trim() !== '') {
-      updateTask({
-        ...task,
-        completed: false,
-        subtasks: [
-          ...task.subtasks,
-          {
-            id: Date.now().toString(),
-            title: newSubtask,
-            completed: false,
-          },
-        ],
+    const result = await updateTask(updatedTask);
+    if (result.ok) {
+      onClose();
+    } else {
+      toast({
+        title: "Unable to save task",
+        description: result.error,
+        variant: "destructive",
       });
-      setNewSubtask('');
+    }
+  };
+  
+  const handleDelete = async () => {
+    const result = await deleteTask(task.id);
+    if (result.ok) {
+      onClose();
+    } else {
+      toast({
+        title: "Unable to delete task",
+        description: result.error,
+        variant: "destructive",
+      });
+    }
+  };
+  
+  const handleAddSubtask = async () => {
+    if (newSubtask.trim() !== '') {
+      const result = await addSubtask(task.id, newSubtask.trim());
+      if (result.ok) {
+        setNewSubtask('');
+      } else {
+        toast({
+          title: "Unable to add subtask",
+          description: result.error,
+          variant: "destructive",
+        });
+      }
+    }
+  };
+
+  const handleToggleSubtask = async (subtaskId: string) => {
+    const result = await toggleSubtaskCompletion(task.id, subtaskId);
+    if (!result.ok) {
+      toast({
+        title: "Unable to update subtask",
+        description: result.error,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDeleteSubtask = async (subtaskId: string) => {
+    const result = await deleteSubtask(task.id, subtaskId);
+    if (!result.ok) {
+      toast({
+        title: "Unable to delete subtask",
+        description: result.error,
+        variant: "destructive",
+      });
     }
   };
   
@@ -116,7 +153,7 @@ const TaskDetail = ({ task, onClose }: TaskDetailProps) => {
             <div key={subtask.id} className="flex items-center gap-2">
               <Checkbox 
                 checked={subtask.completed}
-                onClick={() => toggleSubtaskCompletion(task.id, subtask.id)}
+                onCheckedChange={() => handleToggleSubtask(subtask.id)}
               />
               <span className={`flex-1 ${subtask.completed ? 'line-through text-gray-400' : ''}`}>
                 {subtask.title}
@@ -125,7 +162,7 @@ const TaskDetail = ({ task, onClose }: TaskDetailProps) => {
                 variant="ghost"
                 size="icon"
                 className="h-7 w-7 text-gray-400 hover:text-destructive"
-                onClick={() => deleteSubtask(task.id, subtask.id)}
+                onClick={() => handleDeleteSubtask(subtask.id)}
                 aria-label="Delete subtask"
               >
                 <X className="h-4 w-4" />
@@ -138,9 +175,9 @@ const TaskDetail = ({ task, onClose }: TaskDetailProps) => {
               placeholder="Add subtask"
               value={newSubtask}
               onChange={(e) => setNewSubtask(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && addSubtask()}
+              onKeyDown={(e) => e.key === 'Enter' && handleAddSubtask()}
             />
-            <Button size="icon" onClick={addSubtask}>
+            <Button size="icon" onClick={handleAddSubtask}>
               <Plus className="h-4 w-4" />
             </Button>
           </div>
